@@ -95,10 +95,12 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     _totalCost += node->_cost;
     _totalCount++;
     if (_head) {
+        //存在_head，将node插到链表最前面
         node->_next = _head;
         _head->_prev = node;
         _head = node;
     } else {
+        //不存在_head
         _head = _tail = node;
     }
 }
@@ -107,28 +109,43 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     if (_head == node) return;
     
     if (_tail == node) {
+        //如果node是尾部节点，直接将尾部节点的_prev节点置为尾部节点
         _tail = node->_prev;
         _tail->_next = nil;
     } else {
+        //如果node不是尾部节点，将node下一个节点的_prev置为node的上一个节点，将node前一个节点的_next置为node的下一个节点
         node->_next->_prev = node->_prev;
         node->_prev->_next = node->_next;
     }
+    //将node节点置为_head节点
     node->_next = _head;
     node->_prev = nil;
     _head->_prev = node;
     _head = node;
 }
 
+/**
+ * 移除链表中的某一节点
+ *
+ * @param node 将要移除的节点
+ */
 - (void)removeNode:(_YYLinkedMapNode *)node {
     CFDictionaryRemoveValue(_dic, (__bridge const void *)(node->_key));
     _totalCost -= node->_cost;
     _totalCount--;
+    //将node下一个节点的_prev置为node的上一个节点
     if (node->_next) node->_next->_prev = node->_prev;
+    //将node前一个节点的_next置为node的下一个节点
     if (node->_prev) node->_prev->_next = node->_next;
+    
+    //更新_head和_tail节点
     if (_head == node) _head = node->_next;
     if (_tail == node) _tail = node->_prev;
 }
 
+/**
+ * 移除尾部节点
+ */
 - (_YYLinkedMapNode *)removeTailNode {
     if (!_tail) return nil;
     _YYLinkedMapNode *tail = _tail;
@@ -154,6 +171,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
         _dic = CFDictionaryCreateMutable(CFAllocatorGetDefault(), 0, &kCFTypeDictionaryKeyCallBacks, &kCFTypeDictionaryValueCallBacks);
         
         if (_releaseAsynchronously) {
+            //异步释放 _dic
             dispatch_queue_t queue = _releaseOnMainThread ? dispatch_get_main_queue() : YYMemoryCacheGetReleaseQueue();
             dispatch_async(queue, ^{
                 CFRelease(holder); // hold and release in specified queue
@@ -178,6 +196,9 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     dispatch_queue_t _queue;
 }
 
+/**
+ * 递归调用，按照Age、Count、Cost维度后台清除内存
+ */
 - (void)_trimRecursively {
     __weak typeof(self) _self = self;
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(_autoTrimInterval * NSEC_PER_SEC)), dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
@@ -196,6 +217,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     });
 }
 
+
 - (void)_trimToCost:(NSUInteger)costLimit {
     BOOL finish = NO;
     pthread_mutex_lock(&_lock);
@@ -208,6 +230,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     pthread_mutex_unlock(&_lock);
     if (finish) return;
     
+    //暂时将需要释放的节点保存到数组里面，方便在指定的队列中释放
     NSMutableArray *holder = [NSMutableArray new];
     while (!finish) {
         if (pthread_mutex_trylock(&_lock) == 0) {
@@ -223,6 +246,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
         }
     }
     if (holder.count) {
+        //在指定的队列中释放超出costLimit的节点
         dispatch_queue_t queue = _lru->_releaseOnMainThread ? dispatch_get_main_queue() : YYMemoryCacheGetReleaseQueue();
         dispatch_async(queue, ^{
             [holder count]; // release in queue
@@ -237,6 +261,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
         [_lru removeAll];
         finish = YES;
     } else if (_lru->_totalCount <= countLimit) {
+        //如果链表totalCount没有超过countLimit，直接返回
         finish = YES;
     }
     pthread_mutex_unlock(&_lock);
@@ -245,6 +270,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     NSMutableArray *holder = [NSMutableArray new];
     while (!finish) {
         if (pthread_mutex_trylock(&_lock) == 0) {
+            //从链表的最后一个节点遍历，判断totalCount有没有超过countLimit
             if (_lru->_totalCount > countLimit) {
                 _YYLinkedMapNode *node = [_lru removeTailNode];
                 if (node) [holder addObject:node];
@@ -257,6 +283,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
         }
     }
     if (holder.count) {
+        //将删除的节点在指定的队列中释放
         dispatch_queue_t queue = _lru->_releaseOnMainThread ? dispatch_get_main_queue() : YYMemoryCacheGetReleaseQueue();
         dispatch_async(queue, ^{
             [holder count]; // release in queue
@@ -272,6 +299,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
         [_lru removeAll];
         finish = YES;
     } else if (!_lru->_tail || (now - _lru->_tail->_time) <= ageLimit) {
+        //如果链表最后一个节点的时间没有超过限制，返回
         finish = YES;
     }
     pthread_mutex_unlock(&_lock);
@@ -280,6 +308,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
     NSMutableArray *holder = [NSMutableArray new];
     while (!finish) {
         if (pthread_mutex_trylock(&_lock) == 0) {
+            //从链表的最后一个节点遍历，判断节点的时间是否超过限制的时间
             if (_lru->_tail && (now - _lru->_tail->_time) > ageLimit) {
                 _YYLinkedMapNode *node = [_lru removeTailNode];
                 if (node) [holder addObject:node];
@@ -292,6 +321,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
         }
     }
     if (holder.count) {
+        //将删除的节点在指定的队列中释放
         dispatch_queue_t queue = _lru->_releaseOnMainThread ? dispatch_get_main_queue() : YYMemoryCacheGetReleaseQueue();
         dispatch_async(queue, ^{
             [holder count]; // release in queue
@@ -396,6 +426,7 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
 
 - (id)objectForKey:(id)key {
     if (!key) return nil;
+    
     pthread_mutex_lock(&_lock);
     _YYLinkedMapNode *node = CFDictionaryGetValue(_lru->_dic, (__bridge const void *)(key));
     if (node) {
@@ -434,11 +465,18 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
         node->_value = object;
         [_lru insertNodeAtHead:node];
     }
+    
+    //如果加入节点后总cost超出costLimit，循环遍历，移除最后一个节点直到没有超过最大cost
     if (_lru->_totalCost > _costLimit) {
+        __weak typeof(self) wself = self;
         dispatch_async(_queue, ^{
-            [self trimToCost:_costLimit];
+            __strong typeof(wself) sself = wself;
+            if (!sself) return ;
+            [sself trimToCost:sself->_costLimit];
         });
     }
+    
+    //如果加入节点后总count超出countLimit，直接移除最后一个节点，并在指定队列中释放
     if (_lru->_totalCount > _countLimit) {
         _YYLinkedMapNode *node = [_lru removeTailNode];
         if (_lru->_releaseAsynchronously) {
@@ -463,10 +501,12 @@ static inline dispatch_queue_t YYMemoryCacheGetReleaseQueue() {
         [_lru removeNode:node];
         if (_lru->_releaseAsynchronously) {
             dispatch_queue_t queue = _lru->_releaseOnMainThread ? dispatch_get_main_queue() : YYMemoryCacheGetReleaseQueue();
+            //将node捕获到block中在指定队列中释放，避免阻塞线程（cool）
             dispatch_async(queue, ^{
                 [node class]; //hold and release in queue
             });
         } else if (_lru->_releaseOnMainThread && !pthread_main_np()) {
+            //将node捕获到block中在指定队列中释放，避免阻塞线程（cool）
             dispatch_async(dispatch_get_main_queue(), ^{
                 [node class]; //hold and release in queue
             });

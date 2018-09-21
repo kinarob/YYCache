@@ -220,6 +220,16 @@ static UIApplication *_YYSharedApplication() {
     }
 }
 
+/**
+ * 判断是否是`文件存储`，如果是`文件存储`，直接将data写入文件，然后再将文件的相关信息存储到数据库,但是inline_data字段为空
+ * 如果是`数据库存储`，直接将data写入数据库，附带数据的信息
+ *
+ @param key          存储数据对应的key
+ @param value        需要存储的value
+ @param fileName     文件名
+ @param extendedData 扩展的数据
+ @return             保存是否成功
+ */
 - (BOOL)_dbSaveWithKey:(NSString *)key value:(NSData *)value fileName:(NSString *)fileName extendedData:(NSData *)extendedData {
     NSString *sql = @"insert or replace into manifest (key, filename, size, inline_data, modification_time, last_access_time, extended_data) values (?1, ?2, ?3, ?4, ?5, ?6, ?7);";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -246,6 +256,12 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ * 更新key对应记录的访问时间
+ *
+ @param key 唯一key
+ @return 是否更新成功
+ */
 - (BOOL)_dbUpdateAccessTimeWithKey:(NSString *)key {
     NSString *sql = @"update manifest set last_access_time = ?1 where key = ?2;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -260,6 +276,12 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ * 更新keys对应记录的访问时间
+ *
+ @param keys 唯一key （数组）
+ @return 是否更新成功
+ */
 - (BOOL)_dbUpdateAccessTimeWithKeys:(NSArray *)keys {
     if (![self _dbCheck]) return NO;
     int t = (int)time(NULL);
@@ -282,6 +304,12 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ * 根据key删除`Disk`中对应的记录
+ *
+ @param key 唯一key的数组
+ @return 是否删除成功
+ */
 - (BOOL)_dbDeleteItemWithKey:(NSString *)key {
     NSString *sql = @"delete from manifest where key = ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -296,6 +324,12 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ * 根据keys删除`Disk`中的数据
+ *
+ @param keys 唯一key的数组
+ @return 是否删除成功
+ */
 - (BOOL)_dbDeleteItemWithKeys:(NSArray *)keys {
     if (![self _dbCheck]) return NO;
     NSString *sql =  [NSString stringWithFormat:@"delete from manifest where key in (%@);", [self _dbJoinedKeys:keys]];
@@ -316,6 +350,13 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+
+/**
+ * 删除`Disk`中大于某一大小的所有记录
+ *
+ @param size 数据大小
+ @return 是否删除成功
+ */
 - (BOOL)_dbDeleteItemsWithSizeLargerThan:(int)size {
     NSString *sql = @"delete from manifest where size > ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -329,6 +370,12 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ * 删除`Disk`中在访问某一个时间点之前的所有数据
+ *
+ @param time 时间点
+ @return 是否删除成功
+ */
 - (BOOL)_dbDeleteItemsWithTimeEarlierThan:(int)time {
     NSString *sql = @"delete from manifest where last_access_time < ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -342,11 +389,20 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+/**
+ * 将`数据库`中的一条记录转为YYKVStorageItem
+ *
+ @param stmt sqlite3_stmt
+ @param excludeInlineData 是否排除数据库内部数据data Yes：文件存储 NO：数据库存储
+ @return YYKVStorageItem
+ */
 - (YYKVStorageItem *)_dbGetItemFromStmt:(sqlite3_stmt *)stmt excludeInlineData:(BOOL)excludeInlineData {
     int i = 0;
     char *key = (char *)sqlite3_column_text(stmt, i++);
     char *filename = (char *)sqlite3_column_text(stmt, i++);
     int size = sqlite3_column_int(stmt, i++);
+    
+    //如果是inline_data字段，要取出sqlite3_column中的byte和length
     const void *inline_data = excludeInlineData ? NULL : sqlite3_column_blob(stmt, i);
     int inline_data_bytes = excludeInlineData ? 0 : sqlite3_column_bytes(stmt, i++);
     int modification_time = sqlite3_column_int(stmt, i++);
@@ -365,6 +421,13 @@ static UIApplication *_YYSharedApplication() {
     return item;
 }
 
+/**
+ 根据key获取对应的item
+
+ @param key 获取数据唯一的key
+ @param excludeInlineData 是否排除数据库内部数据 Yes：文件存储 NO：数据库存储
+ @return 返回YYKVStorageItem
+ */
 - (YYKVStorageItem *)_dbGetItemWithKey:(NSString *)key excludeInlineData:(BOOL)excludeInlineData {
     NSString *sql = excludeInlineData ? @"select key, filename, size, modification_time, last_access_time, extended_data from manifest where key = ?1;" : @"select key, filename, size, inline_data, modification_time, last_access_time, extended_data from manifest where key = ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -383,6 +446,13 @@ static UIApplication *_YYSharedApplication() {
     return item;
 }
 
+/**
+ * 根据keys获取对应的items <YYKVStorageItem *>（数组）
+ *
+ @param keys 获取数据keys(数组)
+ @param excludeInlineData 是否排除数据库内部数据 Yes：文件存储 NO：数据库存储
+ @return 返回存储YYKVStorageItem的数组
+ */
 - (NSMutableArray *)_dbGetItemWithKeys:(NSArray *)keys excludeInlineData:(BOOL)excludeInlineData {
     if (![self _dbCheck]) return nil;
     NSString *sql;
@@ -418,6 +488,13 @@ static UIApplication *_YYSharedApplication() {
     return items;
 }
 
+
+/**
+ * 根据key获取`数据库`中对应的data数据
+ *
+ @param key 唯一的key
+ @return data 可能为空
+ */
 - (NSData *)_dbGetValueWithKey:(NSString *)key {
     NSString *sql = @"select inline_data from manifest where key = ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -438,6 +515,12 @@ static UIApplication *_YYSharedApplication() {
     }
 }
 
+/**
+ * 根据key在`数据库`中获取对应的文件名
+ *
+ @param key 唯一的key
+ @return 对应的文件名
+ */
 - (NSString *)_dbGetFilenameWithKey:(NSString *)key {
     NSString *sql = @"select filename from manifest where key = ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -457,6 +540,12 @@ static UIApplication *_YYSharedApplication() {
     return nil;
 }
 
+/**
+ * 根据keys在`数据库`中获取对应的文件名（数组）
+ *
+ @param keys 唯一key （数组）
+ @return  [<filename *>]
+ */
 - (NSMutableArray *)_dbGetFilenameWithKeys:(NSArray *)keys {
     if (![self _dbCheck]) return nil;
     NSString *sql = [NSString stringWithFormat:@"select filename from manifest where key in (%@);", [self _dbJoinedKeys:keys]];
@@ -489,6 +578,13 @@ static UIApplication *_YYSharedApplication() {
     return filenames;
 }
 
+/**
+ * 在`数据库`中获取文件大于size的所有文件名
+ *
+ @param  size 大小节点
+ @return [<filename *>]
+ @Note   以`filename`形式保存的数据
+ */
 - (NSMutableArray *)_dbGetFilenamesWithSizeLargerThan:(int)size {
     NSString *sql = @"select filename from manifest where size > ?1 and filename is not null;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -515,6 +611,13 @@ static UIApplication *_YYSharedApplication() {
     return filenames;
 }
 
+/**
+ * 在`数据库`中获取文件名访问日期在time之前的所有文件名
+ *
+ @param  time 时间节点
+ @return [<filename *>]
+ @Note   以`filename`形式保存的数据
+ */
 - (NSMutableArray *)_dbGetFilenamesWithTimeEarlierThan:(int)time {
     NSString *sql = @"select filename from manifest where last_access_time < ?1 and filename is not null;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -541,6 +644,12 @@ static UIApplication *_YYSharedApplication() {
     return filenames;
 }
 
+/**
+ * 在`数据库`中根据访问日期（升序）和Limit来获取数据
+ *
+ @param count limit
+ @return [<YYKVStorageItem *>]
+ */
 - (NSMutableArray *)_dbGetItemSizeInfoOrderByTimeAscWithLimit:(int)count {
     NSString *sql = @"select key, filename, size from manifest order by last_access_time asc limit ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -573,6 +682,12 @@ static UIApplication *_YYSharedApplication() {
     return items;
 }
 
+/**
+ * 判断某一个key对应的数据在`数据库`中是否存在
+ *
+ @param key 数据唯一key
+ @return 0：数据库中不存在，>0 存在
+ */
 - (int)_dbGetItemCountWithKey:(NSString *)key {
     NSString *sql = @"select count(key) from manifest where key = ?1;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -586,6 +701,11 @@ static UIApplication *_YYSharedApplication() {
     return sqlite3_column_int(stmt, 0);
 }
 
+/**
+ * 获取`Disk`中存的数据的总大小（包括数据库和文件）
+ *
+ @return 数据大小（字节）
+ */
 - (int)_dbGetTotalItemSize {
     NSString *sql = @"select sum(size) from manifest;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -598,6 +718,11 @@ static UIApplication *_YYSharedApplication() {
     return sqlite3_column_int(stmt, 0);
 }
 
+/**
+ * 获取`Disk`中存储的数据总数
+ *
+ @return Count
+ */
 - (int)_dbGetTotalItemCount {
     NSString *sql = @"select count(*) from manifest;";
     sqlite3_stmt *stmt = [self _dbPrepareStmt:sql];
@@ -629,6 +754,11 @@ static UIApplication *_YYSharedApplication() {
     return [[NSFileManager defaultManager] removeItemAtPath:path error:NULL];
 }
 
+
+/**
+ * 将以`文件`形式存储的数据文件夹移动到trash文件夹
+ @return 文件移动是否成功
+ */
 - (BOOL)_fileMoveAllToTrash {
     CFUUIDRef uuidRef = CFUUIDCreate(NULL);
     CFStringRef uuid = CFUUIDCreateString(NULL, uuidRef);
@@ -642,6 +772,9 @@ static UIApplication *_YYSharedApplication() {
     return suc;
 }
 
+/**
+ * 在trashQueuel队列中删除trash文件夹的数据
+ */
 - (void)_fileEmptyTrashInBackground {
     NSString *trashPath = _trashPath;
     dispatch_queue_t queue = _trashQueue;
@@ -742,6 +875,18 @@ static UIApplication *_YYSharedApplication() {
     return [self saveItemWithKey:key value:value filename:nil extendedData:nil];
 }
 
+
+/**
+ * 存储数据
+ *
+ @param key          存储数据唯一的key
+ @param value        存储数据value
+ @param filename     文件名
+ @param extendedData 扩展数据
+ @return             是否存储成功
+ @Note 如果有filename，直接将data写入`文件`，再将文件的相关信息存储到数据库
+ * 如果没有filename，直接将data写入`数据库`，附带数据的信息
+ */
 - (BOOL)saveItemWithKey:(NSString *)key value:(NSData *)value filename:(NSString *)filename extendedData:(NSData *)extendedData {
     if (key.length == 0 || value.length == 0) return NO;
     if (_type == YYKVStorageTypeFile && filename.length == 0) {
@@ -916,6 +1061,13 @@ static UIApplication *_YYSharedApplication() {
     return suc;
 }
 
+
+
+/**
+ * 删除`Disk`中所有数据
+ *
+ @return 是否删除成功
+ */
 - (BOOL)removeAllItems {
     if (![self _dbClose]) return NO;
     [self _reset];
@@ -924,6 +1076,14 @@ static UIApplication *_YYSharedApplication() {
     return YES;
 }
 
+
+
+/**
+ * 删除`Disk`的中所有的数据，带进度
+ *
+ @param progress 进度条
+ @param end      是否删除成功
+ */
 - (void)removeAllItemsWithProgressBlock:(void(^)(int removedCount, int totalCount))progress
                                endBlock:(void(^)(BOOL error))end {
     
@@ -936,6 +1096,7 @@ static UIApplication *_YYSharedApplication() {
         NSArray *items = nil;
         BOOL suc = NO;
         do {
+            //获取访问日期升序 每次32条数据
             items = [self _dbGetItemSizeInfoOrderByTimeAscWithLimit:perCount];
             for (YYKVStorageItem *item in items) {
                 if (left > 0) {
@@ -956,6 +1117,15 @@ static UIApplication *_YYSharedApplication() {
     }
 }
 
+
+
+/**
+ * 在`数据库`中获取YYKVStorageItem
+ *
+ @param key 获取数据唯一的key
+ @return    YYKVStorageItem
+ @Note      如果数据库中存在数据，更新item中的访问时间
+ */
 - (YYKVStorageItem *)getItemForKey:(NSString *)key {
     if (key.length == 0) return nil;
     YYKVStorageItem *item = [self _dbGetItemWithKey:key excludeInlineData:NO];
@@ -972,12 +1142,27 @@ static UIApplication *_YYSharedApplication() {
     return item;
 }
 
+/**
+ * 在data`文件`中获取YYKVStorageItem
+ *
+ @param key 获取数据唯一的key
+ @return    YYKVStorageItem
+ @Note      如果data文件中存在数据，没有更新数据库中的最后访问时间
+ */
 - (YYKVStorageItem *)getItemInfoForKey:(NSString *)key {
     if (key.length == 0) return nil;
     YYKVStorageItem *item = [self _dbGetItemWithKey:key excludeInlineData:YES];
     return item;
 }
 
+
+/**
+ * 在`Disk`中获取对应key的data
+ *
+ @param key 获取数据唯一的key
+ @return    NSData
+ @Note      如果data有值，都更新数据库中的最后访问时间字段
+ */
 - (NSData *)getItemValueForKey:(NSString *)key {
     if (key.length == 0) return nil;
     NSData *value = nil;
@@ -1014,6 +1199,14 @@ static UIApplication *_YYSharedApplication() {
     return value;
 }
 
+/**
+ * 在`Disk`中获取对应keys的具体数据
+ *
+ @param     keys 获取数据数组key
+ @return    存放YYKVStorageItem元素的数组
+ @Note      如果是文件存储，但value为nil，直接删除
+ *          如果数组中有值，更新数据库中的最后访问时间字段
+ */
 - (NSArray *)getItemForKeys:(NSArray *)keys {
     if (keys.count == 0) return nil;
     NSMutableArray *items = [self _dbGetItemWithKeys:keys excludeInlineData:NO];
@@ -1037,11 +1230,26 @@ static UIApplication *_YYSharedApplication() {
     return items.count ? items : nil;
 }
 
+
+/**
+ * 在`文件`中获取对应keys的具体数据
+ *
+ @param     keys 获取数据数组key
+ @return    存放YYKVStorageItem元素的数组
+ @Note      如果是文件存储，不会更新数据库中的最后访问时间
+ */
 - (NSArray *)getItemInfoForKeys:(NSArray *)keys {
     if (keys.count == 0) return nil;
     return [self _dbGetItemWithKeys:keys excludeInlineData:YES];
 }
 
+
+/**
+ * 在`Disk`中获取对应keys的具体数据
+ *
+ @param     keys 获取数据数组key
+ @return    存放YYKVStorageItem元素的字典
+ */
 - (NSDictionary *)getItemValueForKeys:(NSArray *)keys {
     NSMutableArray *items = (NSMutableArray *)[self getItemForKeys:keys];
     NSMutableDictionary *kv = [NSMutableDictionary new];
@@ -1053,15 +1261,33 @@ static UIApplication *_YYSharedApplication() {
     return kv.count ? kv : nil;
 }
 
+/**
+ * 在`数据库`中查找对应key的记录是否存在
+ *
+ @param     key 获取数据key
+ @return    是否存在对应的记录
+ */
 - (BOOL)itemExistsForKey:(NSString *)key {
     if (key.length == 0) return NO;
-    return [self _dbGetItemCountWithKey:key] > 0;
+    int extractedExpr = [self _dbGetItemCountWithKey:key];
+    return extractedExpr > 0;
 }
 
+
+/**
+ * 在`数据库`中获取记录存在的总数
+ *
+ @return count
+ */
 - (int)getItemsCount {
     return [self _dbGetTotalItemCount];
 }
 
+/**
+ * 在`数据库`中获取记录存在的总大小
+ *
+ @return size
+ */
 - (int)getItemsSize {
     return [self _dbGetTotalItemSize];
 }
